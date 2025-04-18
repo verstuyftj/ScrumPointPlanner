@@ -21,10 +21,11 @@ export const useWebSocket = (onMessage: (message: WebSocketMessage) => void) => 
     const isSecure = window.location.protocol === 'https:';
     const wsProtocol = isSecure ? 'wss://' : 'ws://';
     const hostname = window.location.hostname;
+    const port = window.location.port ? `:${window.location.port}` : '';
     
-    // Connect to the WebSocket server on port 5001
-    // Use secure WebSocket (wss://) if page is loaded via HTTPS
-    let wsUrl = `${wsProtocol}${hostname}:5001`;
+    // Connect to the WebSocket server using the same host and port as the page
+    // but with a specific path to avoid conflicts with Vite's WebSocket
+    let wsUrl = `${wsProtocol}${hostname}${port}/api/planning-poker-ws`;
     
     console.log("Connecting to WebSocket at:", wsUrl);
     const socket = new WebSocket(wsUrl);
