@@ -25,6 +25,15 @@ export type Session = {
   revealed: boolean;
 };
 
+export type Story = {
+  id: number;
+  sessionId: string;
+  title: string;
+  link: string;
+  isCompleted: boolean;
+  createdAt: Date;
+};
+
 export type Vote = {
   id: number;
   sessionId: string;
@@ -37,6 +46,7 @@ const Home = () => {
   const [currentUser, setCurrentUser] = useState<Participant | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [votes, setVotes] = useState<Vote[]>([]);
+  const [stories, setStories] = useState<Story[]>([]);
   const [currentVote, setCurrentVote] = useState<string | null>(null);
   const [allVotesIn, setAllVotesIn] = useState(false);
   const { toast } = useToast();
@@ -125,15 +135,36 @@ const Home = () => {
         }
         break;
         
+      case MessageType.STORIES_UPDATED:
+        if (message.payload.stories) {
+          setStories(message.payload.stories);
+        }
+        break;
+        
+      case MessageType.STORY_ADDED:
+        if (message.payload.story) {
+          setStories(prev => [...prev, message.payload.story]);
+          toast({
+            title: "Story added",
+            description: `"${message.payload.story.title}" has been added`,
+          });
+        }
+        break;
+        
       case MessageType.STORY_UPDATED:
         if (message.payload.session) {
           setActiveSession(message.payload.session);
           setVotes([]);
           setCurrentVote(null);
           setAllVotesIn(false);
+          
+          const storyDetails = message.payload.currentStory 
+            ? `"${message.payload.currentStory.title}"`
+            : "New story";
+            
           toast({
-            title: "New story",
-            description: "A new story has been set for estimation",
+            title: "Story selected",
+            description: `${storyDetails} is now being estimated`,
           });
         }
         break;
@@ -215,6 +246,35 @@ const Home = () => {
       },
     });
   };
+  
+  const handleAddStory = (title: string, link: string) => {
+    sendMessage({
+      type: MessageType.ADD_STORY,
+      payload: {
+        title,
+        link
+      },
+    });
+  };
+  
+  const handleSelectStory = (storyId: number) => {
+    sendMessage({
+      type: MessageType.SET_CURRENT_STORY,
+      payload: {
+        storyId
+      },
+    });
+  };
+  
+  // Load stories when session is joined
+  useEffect(() => {
+    if (activeSession) {
+      sendMessage({
+        type: MessageType.GET_STORIES,
+        payload: {},
+      });
+    }
+  }, [activeSession?.id]);
 
   const handleLeaveSession = () => {
     sendMessage({
@@ -225,6 +285,7 @@ const Home = () => {
     setCurrentUser(null);
     setParticipants([]);
     setVotes([]);
+    setStories([]);
     setCurrentVote(null);
     setAllVotesIn(false);
   };
@@ -246,11 +307,14 @@ const Home = () => {
             participants={participants}
             currentVote={currentVote}
             votes={votes}
+            stories={stories}
             allVotesIn={allVotesIn}
             onSelectCard={handleSelectCard}
             onRevealCards={handleRevealCards}
             onResetVoting={handleResetVoting}
             onSetStory={handleSetStory}
+            onAddStory={handleAddStory}
+            onSelectStory={handleSelectStory}
             onLeaveSession={handleLeaveSession}
           />
         )}
