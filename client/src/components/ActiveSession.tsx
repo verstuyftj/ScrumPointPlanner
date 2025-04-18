@@ -131,6 +131,7 @@ const ActiveSession = ({
               className="bg-status-success hover:bg-status-success/90 text-white"
               onClick={onRevealCards}
               disabled={!allVotesIn || session.revealed}
+              style={{ display: (!allVotesIn || session.revealed) ? 'none' : 'flex' }}
             >
               <Eye className="mr-2 h-4 w-4" /> Reveal Cards
             </Button>
