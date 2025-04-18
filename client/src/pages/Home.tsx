@@ -151,7 +151,15 @@ const Home = () => {
   const { sendMessage } = useWebSocket(handleSocketMessage);
 
   const handleCreateSession = (sessionName: string, userName: string, votingSystem: string) => {
-    sendMessage({
+    console.log('Creating session with:', { sessionName, userName, votingSystem });
+    
+    // Display a toast to indicate we're trying to create a session
+    toast({
+      title: "Creating session...",
+      description: `Attempting to create session "${sessionName}" as ${userName}`,
+    });
+    
+    const message = {
       type: MessageType.JOIN_SESSION,
       payload: {
         sessionName,
@@ -159,7 +167,10 @@ const Home = () => {
         isAdmin: true,
         votingSystem,
       },
-    });
+    };
+    
+    console.log('Sending message:', message);
+    sendMessage(message);
   };
 
   const handleJoinSession = (sessionId: string, userName: string) => {
