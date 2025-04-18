@@ -37,6 +37,26 @@ export const insertSessionSchema = createInsertSchema(sessions).pick({
   currentStory: true,
 });
 
+// Story schema
+export const stories = pgTable("stories", {
+  id: serial("id").primaryKey(),
+  sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  link: text("link").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  isCompleted: boolean("is_completed").notNull().default(false),
+});
+
+export const insertStorySchema = createInsertSchema(stories).pick({
+  sessionId: true,
+  title: true,
+  link: true,
+  isCompleted: true,
+});
+
+export type InsertStory = z.infer<typeof insertStorySchema>;
+export type Story = typeof stories.$inferSelect;
+
 export type InsertSession = z.infer<typeof insertSessionSchema>;
 export type Session = typeof sessions.$inferSelect;
 
@@ -93,6 +113,11 @@ export enum MessageType {
   VOTING_RESET = "voting_reset",
   SET_STORY = "set_story",
   STORY_UPDATED = "story_updated",
+  ADD_STORY = "add_story",
+  STORY_ADDED = "story_added",
+  GET_STORIES = "get_stories",
+  STORIES_UPDATED = "stories_updated",
+  SET_CURRENT_STORY = "set_current_story",
   SESSION_UPDATE = "session_update",
   ERROR = "error"
 }

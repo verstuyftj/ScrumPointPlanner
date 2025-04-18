@@ -2,6 +2,7 @@ import {
   sessions,
   participants, 
   votes, 
+  stories,
   type Session, 
   type InsertSession, 
   type Participant,
@@ -10,6 +11,8 @@ import {
   type InsertVote,
   type User,
   type InsertUser,
+  type Story,
+  type InsertStory,
   users
 } from "@shared/schema";
 
@@ -34,6 +37,12 @@ export interface IStorage {
   updateParticipant(id: number, participantData: Partial<Participant>): Promise<Participant | undefined>;
   removeParticipant(id: number): Promise<boolean>;
   
+  // Story operations
+  addStory(story: InsertStory): Promise<Story>;
+  getStory(id: number): Promise<Story | undefined>;
+  getSessionStories(sessionId: string): Promise<Story[]>;
+  updateStory(id: number, storyData: Partial<Story>): Promise<Story | undefined>;
+  
   // Vote operations
   castVote(vote: InsertVote): Promise<Vote>;
   getVote(participantId: number, sessionId: string): Promise<Vote | undefined>;
@@ -46,20 +55,24 @@ export class MemStorage implements IStorage {
   private sessionMap: Map<string, Session>;
   private participantMap: Map<number, Participant>;
   private voteMap: Map<number, Vote>;
+  private storyMap: Map<number, Story>;
   
   private userIdCounter: number;
   private participantIdCounter: number;
   private voteIdCounter: number;
+  private storyIdCounter: number;
 
   constructor() {
     this.users = new Map();
     this.sessionMap = new Map();
     this.participantMap = new Map();
     this.voteMap = new Map();
+    this.storyMap = new Map();
     
     this.userIdCounter = 1;
     this.participantIdCounter = 1;
     this.voteIdCounter = 1;
+    this.storyIdCounter = 1;
   }
 
   // User operations
@@ -154,6 +167,40 @@ export class MemStorage implements IStorage {
 
   async removeParticipant(id: number): Promise<boolean> {
     return this.participantMap.delete(id);
+  }
+  
+  // Story operations
+  async addStory(story: InsertStory): Promise<Story> {
+    const id = this.storyIdCounter++;
+    const now = new Date();
+    
+    const newStory: Story = { 
+      ...story, 
+      id, 
+      createdAt: now
+    };
+    
+    this.storyMap.set(id, newStory);
+    return newStory;
+  }
+
+  async getStory(id: number): Promise<Story | undefined> {
+    return this.storyMap.get(id);
+  }
+
+  async getSessionStories(sessionId: string): Promise<Story[]> {
+    return Array.from(this.storyMap.values()).filter(
+      (s) => s.sessionId === sessionId
+    );
+  }
+
+  async updateStory(id: number, storyData: Partial<Story>): Promise<Story | undefined> {
+    const existingStory = this.storyMap.get(id);
+    if (!existingStory) return undefined;
+
+    const updatedStory = { ...existingStory, ...storyData };
+    this.storyMap.set(id, updatedStory);
+    return updatedStory;
   }
 
   // Vote operations
