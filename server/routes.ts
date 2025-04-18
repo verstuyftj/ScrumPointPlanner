@@ -24,7 +24,16 @@ interface ClientConnection {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
-  const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  
+  // Create a WebSocket server on the same HTTP server as Express
+  // with a dedicated path to avoid conflicts with Vite's WebSocket
+  const wss = new WebSocketServer({ 
+    server: httpServer,
+    path: "/api/planning-poker-ws",
+    perMessageDeflate: false // Disable compression to avoid issues
+  });
+  
+  console.log("WebSocket server initialized at path /api/planning-poker-ws");
   
   // Store client connections
   const clients = new Map<WebSocket, ClientConnection>();
@@ -102,15 +111,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // WEBSOCKET HANDLING
-  wss.on("connection", (socket) => {
+  wss.on("connection", (socket, req) => {
+    console.log("New WebSocket connection established from:", req.socket.remoteAddress);
+    
     // Add new client connection
     clients.set(socket, { socket });
+    
+    // Send a welcome message to confirm connection
+    socket.send(JSON.stringify({
+      type: MessageType.SESSION_UPDATE,
+      payload: {
+        message: "Connection established successfully"
+      }
+    }));
     
     // Handle messages
     socket.on("message", async (data) => {
       try {
+        const messageStr = data.toString();
+        console.log("Received message:", messageStr);
+        
+        // Check for ping messages
+        if (messageStr.includes('"type":"ping"')) {
+          socket.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
+        
         // Parse and validate message
-        const message = messageSchema.parse(JSON.parse(data.toString()));
+        const message = messageSchema.parse(JSON.parse(messageStr));
         const client = clients.get(socket);
         
         if (!client) {
@@ -477,8 +505,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // HELPER FUNCTIONS
   function sendMessage(socket: WebSocket, message: WebSocketMessage) {
-    if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(message));
+    try {
+      if (socket.readyState === WebSocket.OPEN) {
+        const messageStr = JSON.stringify(message);
+        console.log("Sending message:", messageStr.substring(0, 100) + (messageStr.length > 100 ? '...' : ''));
+        socket.send(messageStr);
+      } else {
+        console.log("Cannot send message, socket not open. ReadyState:", socket.readyState);
+      }
+    } catch (error) {
+      console.error("Error sending message:", error);
     }
   }
 
@@ -490,11 +526,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   function broadcastToSession(sessionId: string, message: WebSocketMessage, exclude?: WebSocket) {
-    clients.forEach((client, socket) => {
-      if (client.sessionId === sessionId && socket !== exclude && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify(message));
-      }
-    });
+    try {
+      const messageStr = JSON.stringify(message);
+      console.log(`Broadcasting to session ${sessionId}:`, messageStr.substring(0, 100) + (messageStr.length > 100 ? '...' : ''));
+      
+      let sendCount = 0;
+      clients.forEach((client, socket) => {
+        if (client.sessionId === sessionId && socket !== exclude) {
+          if (socket.readyState === WebSocket.OPEN) {
+            try {
+              socket.send(messageStr);
+              sendCount++;
+            } catch (err) {
+              console.error("Error sending broadcast to client:", err);
+            }
+          } else {
+            console.log(`Client socket not ready for session ${sessionId}, readyState:`, socket.readyState);
+          }
+        }
+      });
+      
+      console.log(`Broadcast complete: sent to ${sendCount} clients in session ${sessionId}`);
+    } catch (error) {
+      console.error("Error in broadcast:", error);
+    }
   }
 
   return httpServer;

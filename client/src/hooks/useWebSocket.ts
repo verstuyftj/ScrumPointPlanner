@@ -4,22 +4,54 @@ import { MessageType, type WebSocketMessage } from "@shared/schema";
 export const useWebSocket = (onMessage: (message: WebSocketMessage) => void) => {
   const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
   
   // Initialize WebSocket connection
-  useEffect(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+  const connectWebSocket = useCallback(() => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      return; // Already connected
+    }
     
+    // Close existing socket if any
+    if (socketRef.current) {
+      socketRef.current.close();
+    }
+    
+    // Choose the WebSocket protocol (secure or not) based on the page protocol
+    const isSecure = window.location.protocol === 'https:';
+    const wsProtocol = isSecure ? 'wss://' : 'ws://';
+    const hostname = window.location.hostname;
+    
+    // Connect to the WebSocket server on port 5001
+    // Use secure WebSocket (wss://) if page is loaded via HTTPS
+    let wsUrl = `${wsProtocol}${hostname}:5001`;
+    
+    console.log("Connecting to WebSocket at:", wsUrl);
     const socket = new WebSocket(wsUrl);
     
     socket.onopen = () => {
-      console.log("WebSocket connected");
+      console.log("WebSocket connected successfully");
       setIsConnected(true);
+      
+      // Clear any reconnect timeout
+      if (reconnectTimeoutRef.current) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
     };
     
-    socket.onclose = () => {
-      console.log("WebSocket disconnected");
+    socket.onclose = (event) => {
+      console.log("WebSocket disconnected, code:", event.code, "reason:", event.reason);
       setIsConnected(false);
+      
+      // Schedule reconnect
+      if (!reconnectTimeoutRef.current) {
+        reconnectTimeoutRef.current = window.setTimeout(() => {
+          console.log("Attempting to reconnect WebSocket...");
+          connectWebSocket();
+          reconnectTimeoutRef.current = null;
+        }, 3000);
+      }
     };
     
     socket.onerror = (error) => {
@@ -37,19 +69,34 @@ export const useWebSocket = (onMessage: (message: WebSocketMessage) => void) => 
     };
     
     socketRef.current = socket;
+  }, [onMessage]);
+  
+  // Initialize connection
+  useEffect(() => {
+    connectWebSocket();
     
     // Cleanup on unmount
     return () => {
-      socket.close();
+      if (reconnectTimeoutRef.current) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+      }
+      
+      if (socketRef.current) {
+        socketRef.current.close();
+      }
     };
-  }, [onMessage]);
+  }, [connectWebSocket]);
   
-  // Reconnect if connection closes
+  // Keep-alive ping
   useEffect(() => {
     const pingInterval = setInterval(() => {
       if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
         // Send a heartbeat to keep the connection alive
-        socketRef.current.send(JSON.stringify({ type: "ping" }));
+        try {
+          socketRef.current.send(JSON.stringify({ type: "ping" }));
+        } catch (err) {
+          console.error("Error sending ping:", err);
+        }
       }
     }, 30000);
     
@@ -61,11 +108,29 @@ export const useWebSocket = (onMessage: (message: WebSocketMessage) => void) => 
   // Function to send messages
   const sendMessage = useCallback((message: WebSocketMessage) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify(message));
+      try {
+        socketRef.current.send(JSON.stringify(message));
+      } catch (err) {
+        console.error("Error sending message:", err);
+        // Try to reconnect on error
+        connectWebSocket();
+      }
     } else {
-      console.error("WebSocket is not connected");
+      console.error("WebSocket is not connected, trying to reconnect...");
+      connectWebSocket();
+      
+      // Queue the message to be sent after connection
+      setTimeout(() => {
+        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+          try {
+            socketRef.current.send(JSON.stringify(message));
+          } catch (err) {
+            console.error("Error sending queued message:", err);
+          }
+        }
+      }, 1000);
     }
-  }, []);
+  }, [connectWebSocket]);
   
   return { isConnected, sendMessage };
 };
