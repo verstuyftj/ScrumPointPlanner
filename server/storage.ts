@@ -96,8 +96,11 @@ export class MemStorage implements IStorage {
   // Session operations
   async createSession(sessionData: InsertSession): Promise<Session> {
     const now = new Date();
+    // Ensure all required fields are present
     const session: Session = { 
       ...sessionData, 
+      votingSystem: sessionData.votingSystem || 'fibonacci', // Default if not provided
+      currentStory: sessionData.currentStory || null,
       active: true, 
       revealed: false,
       createdAt: now
