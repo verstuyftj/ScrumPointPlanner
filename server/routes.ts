@@ -193,6 +193,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             await handleSetStory(socket, client, message);
             break;
             
+          case MessageType.ADD_STORY:
+            await handleAddStory(socket, client, message);
+            break;
+            
+          case MessageType.GET_STORIES:
+            await handleGetStories(socket, client);
+            break;
+            
+          case MessageType.SET_CURRENT_STORY:
+            await handleSetCurrentStory(socket, client, message);
+            break;
+            
           default:
             sendError(socket, "Unsupported message type");
         }
@@ -510,6 +522,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       sendError(socket, "Failed to reset voting");
+    }
+  }
+  
+  // ADD STORY HANDLER
+  async function handleAddStory(socket: WebSocket, client: ClientConnection, message: WebSocketMessage) {
+    if (!client.participant || !client.sessionId) {
+      return sendError(socket, "Not in a session");
+    }
+    
+    try {
+      const { title, link } = message.payload;
+      
+      if (!client.participant.isAdmin) {
+        return sendError(socket, "Only administrators can add stories");
+      }
+      
+      if (!title || !link) {
+        return sendError(socket, "Title and link are required");
+      }
+      
+      // Add the story
+      const story = await storage.addStory({
+        sessionId: client.sessionId,
+        title,
+        link,
+        isCompleted: false
+      });
+      
+      // Notify all clients
+      broadcastToSession(client.sessionId, {
+        type: MessageType.STORY_ADDED,
+        payload: {
+          story
+        }
+      });
+      
+    } catch (error) {
+      sendError(socket, "Failed to add story");
+    }
+  }
+  
+  // GET STORIES HANDLER
+  async function handleGetStories(socket: WebSocket, client: ClientConnection) {
+    if (!client.participant || !client.sessionId) {
+      return sendError(socket, "Not in a session");
+    }
+    
+    try {
+      // Get all stories for session
+      const stories = await storage.getSessionStories(client.sessionId);
+      
+      // Send to requesting client
+      sendMessage(socket, {
+        type: MessageType.STORIES_UPDATED,
+        payload: {
+          stories
+        }
+      });
+      
+    } catch (error) {
+      sendError(socket, "Failed to get stories");
+    }
+  }
+  
+  // SET CURRENT STORY HANDLER
+  async function handleSetCurrentStory(socket: WebSocket, client: ClientConnection, message: WebSocketMessage) {
+    if (!client.participant || !client.sessionId) {
+      return sendError(socket, "Not in a session");
+    }
+    
+    try {
+      const { storyId } = message.payload;
+      
+      if (!client.participant.isAdmin) {
+        return sendError(socket, "Only administrators can set the current story");
+      }
+      
+      // Get the story
+      const story = await storage.getStory(storyId);
+      if (!story || story.sessionId !== client.sessionId) {
+        return sendError(socket, "Story not found");
+      }
+      
+      // Update session with current story
+      const session = await storage.updateSession(client.sessionId, { 
+        currentStory: `${story.title} (${story.link})`,
+        revealed: false 
+      });
+      
+      if (!session) {
+        return sendError(socket, "Session not found");
+      }
+      
+      // Reset all votes for session
+      await storage.resetVotes(client.sessionId);
+      
+      // Notify all clients
+      broadcastToSession(client.sessionId, {
+        type: MessageType.STORY_UPDATED,
+        payload: {
+          session,
+          currentStory: story
+        }
+      });
+      
+    } catch (error) {
+      sendError(socket, "Failed to set current story");
     }
   }
 

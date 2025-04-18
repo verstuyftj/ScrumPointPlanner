@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { 
@@ -13,6 +13,7 @@ import {
 import PlanningDeck from "./PlanningDeck";
 import TeamStatus from "./TeamStatus";
 import VotingResults from "./VotingResults";
+import StoryManager from "./StoryManager";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Dialog,
@@ -26,8 +27,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { type Session, type Participant, type Vote } from "@/pages/Home";
+import { 
+  type Session, 
+  type Participant, 
+  type Vote, 
+  type Story 
+} from "@/pages/Home";
 import { getCardValues } from "@/lib/cardSystems";
+import { MessageType } from "@shared/schema";
 
 interface ActiveSessionProps {
   session: Session;
@@ -35,11 +42,14 @@ interface ActiveSessionProps {
   participants: Participant[];
   currentVote: string | null;
   votes: Vote[];
+  stories: Story[];
   allVotesIn: boolean;
   onSelectCard: (value: string) => void;
   onRevealCards: () => void;
   onResetVoting: () => void;
   onSetStory: (story: string) => void;
+  onAddStory: (title: string, link: string) => void;
+  onSelectStory: (storyId: number) => void;
   onLeaveSession: () => void;
 }
 
@@ -48,12 +58,15 @@ const ActiveSession = ({
   currentUser,
   participants, 
   currentVote, 
-  votes, 
+  votes,
+  stories,
   allVotesIn,
   onSelectCard, 
   onRevealCards, 
   onResetVoting,
   onSetStory,
+  onAddStory,
+  onSelectStory,
   onLeaveSession
 }: ActiveSessionProps) => {
   const { toast } = useToast();
@@ -200,6 +213,17 @@ const ActiveSession = ({
         votes={votes} 
         revealed={session.revealed} 
       />
+
+      {/* User Stories Manager */}
+      <div className="mb-6">
+        <StoryManager
+          isAdmin={!!currentUser?.isAdmin}
+          sessionId={session.id}
+          stories={stories}
+          onAddStory={onAddStory}
+          onSelectStory={onSelectStory}
+        />
+      </div>
 
       {/* Results Component */}
       {session.revealed && votes.length > 0 && (
