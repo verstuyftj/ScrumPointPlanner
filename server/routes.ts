@@ -2,6 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
+import { ZodError } from "zod";
+import { fromZodError } from "zod-validation-error";
 import { 
   MessageType, 
   messageSchema, 
@@ -13,8 +15,6 @@ import {
   votingSystemSchema
 } from "@shared/schema";
 import { nanoid } from "nanoid";
-import { ZodError } from "zod";
-import { fromZodError } from "zod-validation-error";
 
 interface ClientConnection {
   socket: WebSocket;
@@ -131,6 +131,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const messageStr = data.toString();
         console.log("Received message:", messageStr);
         
+        // Detailed logging for debugging
+        try {
+          const parsedMsg = JSON.parse(messageStr);
+          console.log("Parsed message type:", parsedMsg.type);
+          console.log("Parsed message payload:", JSON.stringify(parsedMsg.payload));
+        } catch (e) {
+          console.error("Error parsing received message for logging:", e);
+        }
+        
         // Check for ping messages
         if (messageStr.includes('"type":"ping"')) {
           socket.send(JSON.stringify({ type: "pong" }));
@@ -175,7 +184,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       } catch (error) {
         console.error("Error handling WebSocket message:", error);
-        sendError(socket, "Invalid message format");
+        
+        // More detailed error information
+        if (error instanceof ZodError) {
+          const validationError = fromZodError(error);
+          console.error("Validation error:", validationError.message);
+          sendError(socket, `Validation error: ${validationError.message}`);
+        } else if (error instanceof Error) {
+          console.error("Error name:", error.name, "Error message:", error.message);
+          sendError(socket, `Error: ${error.message}`);
+        } else {
+          sendError(socket, "Invalid message format");
+        }
       }
     });
     
