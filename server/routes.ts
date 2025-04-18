@@ -1,0 +1,501 @@
+import type { Express } from "express";
+import { createServer, type Server } from "http";
+import { WebSocketServer, WebSocket } from "ws";
+import { storage } from "./storage";
+import { 
+  MessageType, 
+  messageSchema, 
+  insertSessionSchema, 
+  insertParticipantSchema, 
+  insertVoteSchema,
+  type WebSocketMessage,
+  type Participant,
+  votingSystemSchema
+} from "@shared/schema";
+import { nanoid } from "nanoid";
+import { ZodError } from "zod";
+import { fromZodError } from "zod-validation-error";
+
+interface ClientConnection {
+  socket: WebSocket;
+  participant?: Participant;
+  sessionId?: string;
+}
+
+export async function registerRoutes(app: Express): Promise<Server> {
+  const httpServer = createServer(app);
+  const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  
+  // Store client connections
+  const clients = new Map<WebSocket, ClientConnection>();
+  
+  // API ROUTES
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok" });
+  });
+
+  // Get all sessions
+  app.get("/api/sessions", async (_req, res) => {
+    try {
+      const sessions = await storage.getSessions();
+      res.json({ sessions });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch sessions" });
+    }
+  });
+
+  // Get session by ID
+  app.get("/api/sessions/:id", async (req, res) => {
+    try {
+      const session = await storage.getSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      res.json({ session });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch session" });
+    }
+  });
+
+  // Get session participants
+  app.get("/api/sessions/:id/participants", async (req, res) => {
+    try {
+      const participants = await storage.getSessionParticipants(req.params.id);
+      res.json({ participants });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch participants" });
+    }
+  });
+
+  // Get session votes
+  app.get("/api/sessions/:id/votes", async (req, res) => {
+    try {
+      const session = await storage.getSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      
+      if (!session.revealed) {
+        return res.status(403).json({ message: "Votes have not been revealed yet" });
+      }
+      
+      const votes = await storage.getSessionVotes(req.params.id);
+      res.json({ votes });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch votes" });
+    }
+  });
+
+  // Create a new session
+  app.post("/api/sessions", async (req, res) => {
+    try {
+      const data = insertSessionSchema.parse(req.body);
+      const session = await storage.createSession(data);
+      res.status(201).json({ session });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        const validationError = fromZodError(error);
+        return res.status(400).json({ message: validationError.message });
+      }
+      res.status(500).json({ message: "Failed to create session" });
+    }
+  });
+
+  // WEBSOCKET HANDLING
+  wss.on("connection", (socket) => {
+    // Add new client connection
+    clients.set(socket, { socket });
+    
+    // Handle messages
+    socket.on("message", async (data) => {
+      try {
+        // Parse and validate message
+        const message = messageSchema.parse(JSON.parse(data.toString()));
+        const client = clients.get(socket);
+        
+        if (!client) {
+          return sendError(socket, "Client not found");
+        }
+        
+        switch (message.type) {
+          case MessageType.JOIN_SESSION:
+            await handleJoinSession(socket, client, message);
+            break;
+            
+          case MessageType.LEAVE_SESSION:
+            await handleLeaveSession(socket, client);
+            break;
+            
+          case MessageType.CAST_VOTE:
+            await handleCastVote(socket, client, message);
+            break;
+            
+          case MessageType.REVEAL_VOTES:
+            await handleRevealVotes(socket, client);
+            break;
+            
+          case MessageType.RESET_VOTING:
+            await handleResetVoting(socket, client);
+            break;
+            
+          case MessageType.SET_STORY:
+            await handleSetStory(socket, client, message);
+            break;
+            
+          default:
+            sendError(socket, "Unsupported message type");
+        }
+      } catch (error) {
+        console.error("Error handling WebSocket message:", error);
+        sendError(socket, "Invalid message format");
+      }
+    });
+    
+    // Handle disconnection
+    socket.on("close", async () => {
+      const client = clients.get(socket);
+      if (client && client.participant && client.sessionId) {
+        // Update participant as disconnected
+        await storage.updateParticipant(client.participant.id, { connected: false });
+        
+        // Notify other clients in session
+        broadcastToSession(client.sessionId, {
+          type: MessageType.PARTICIPANT_LEFT,
+          payload: {
+            participantId: client.participant.id,
+          }
+        }, socket);
+      }
+      
+      // Remove client from connections
+      clients.delete(socket);
+    });
+  });
+
+  // JOIN SESSION HANDLER
+  async function handleJoinSession(socket: WebSocket, client: ClientConnection, message: WebSocketMessage) {
+    const { sessionId, name, isAdmin, votingSystem, sessionName } = message.payload;
+    
+    // Create new session if needed (admin & no existing session)
+    if (isAdmin && sessionName && votingSystem) {
+      try {
+        // Validate voting system
+        votingSystemSchema.parse(votingSystem);
+        
+        const newSessionId = sessionId || nanoid(6).toUpperCase();
+        
+        // Check if session exists
+        const existingSession = await storage.getSession(newSessionId);
+        if (existingSession) {
+          return sendError(socket, "Session already exists");
+        }
+        
+        // Create new session
+        await storage.createSession({
+          id: newSessionId,
+          name: sessionName,
+          createdBy: name,
+          votingSystem,
+          currentStory: ""
+        });
+        
+        // Create admin participant
+        const participant = await storage.addParticipant({
+          sessionId: newSessionId,
+          name,
+          isAdmin: true
+        });
+        
+        // Update client data
+        client.participant = participant;
+        client.sessionId = newSessionId;
+        
+        // Send success response
+        sendMessage(socket, {
+          type: MessageType.SESSION_UPDATE,
+          payload: {
+            sessionId: newSessionId,
+            participant,
+            session: await storage.getSession(newSessionId),
+            participants: await storage.getSessionParticipants(newSessionId),
+            votes: []
+          }
+        });
+        
+        return;
+      } catch (error) {
+        return sendError(socket, "Invalid session data");
+      }
+    }
+    
+    // Join existing session
+    try {
+      // Validate session ID
+      if (!sessionId) {
+        return sendError(socket, "Session ID is required");
+      }
+      
+      // Check if session exists
+      const session = await storage.getSession(sessionId);
+      if (!session) {
+        return sendError(socket, "Session not found");
+      }
+      
+      // Check for name conflict
+      const existingParticipant = await storage.getParticipantByName(sessionId, name);
+      if (existingParticipant) {
+        if (existingParticipant.connected) {
+          return sendError(socket, "A participant with this name already exists in the session");
+        } else {
+          // Re-connect existing participant
+          await storage.updateParticipant(existingParticipant.id, { connected: true });
+          client.participant = { ...existingParticipant, connected: true };
+        }
+      } else {
+        // Create new participant
+        const participant = await storage.addParticipant({
+          sessionId,
+          name,
+          isAdmin: false
+        });
+        client.participant = participant;
+      }
+      
+      client.sessionId = sessionId;
+      
+      // Get existing votes
+      const votes = session.revealed ? await storage.getSessionVotes(sessionId) : [];
+      
+      // Notify other clients
+      broadcastToSession(sessionId, {
+        type: MessageType.PARTICIPANT_JOINED,
+        payload: {
+          participant: client.participant,
+        }
+      }, socket);
+      
+      // Send session data to client
+      sendMessage(socket, {
+        type: MessageType.SESSION_UPDATE,
+        payload: {
+          sessionId,
+          participant: client.participant,
+          session,
+          participants: await storage.getSessionParticipants(sessionId),
+          votes
+        }
+      });
+    } catch (error) {
+      sendError(socket, "Failed to join session");
+    }
+  }
+
+  // LEAVE SESSION HANDLER
+  async function handleLeaveSession(socket: WebSocket, client: ClientConnection) {
+    if (!client.participant || !client.sessionId) {
+      return sendError(socket, "Not in a session");
+    }
+    
+    try {
+      // Update participant as disconnected
+      await storage.updateParticipant(client.participant.id, { connected: false });
+      
+      // Notify other clients
+      broadcastToSession(client.sessionId, {
+        type: MessageType.PARTICIPANT_LEFT,
+        payload: {
+          participantId: client.participant.id,
+        }
+      }, socket);
+      
+      // Clear client data
+      client.participant = undefined;
+      client.sessionId = undefined;
+      
+      sendMessage(socket, {
+        type: MessageType.LEAVE_SESSION,
+        payload: { success: true }
+      });
+    } catch (error) {
+      sendError(socket, "Failed to leave session");
+    }
+  }
+
+  // CAST VOTE HANDLER
+  async function handleCastVote(socket: WebSocket, client: ClientConnection, message: WebSocketMessage) {
+    if (!client.participant || !client.sessionId) {
+      return sendError(socket, "Not in a session");
+    }
+    
+    try {
+      const { value } = message.payload;
+      
+      if (!value) {
+        return sendError(socket, "Vote value is required");
+      }
+      
+      // Cast vote
+      const vote = await storage.castVote({
+        sessionId: client.sessionId,
+        participantId: client.participant.id,
+        value,
+        storyId: null
+      });
+      
+      // Notify all clients about the vote update (without revealing the value)
+      broadcastToSession(client.sessionId, {
+        type: MessageType.VOTE_UPDATED,
+        payload: {
+          participantId: client.participant.id,
+          hasVoted: true
+        }
+      });
+      
+      // Confirm to the voter
+      sendMessage(socket, {
+        type: MessageType.VOTE_UPDATED,
+        payload: {
+          vote
+        }
+      });
+      
+      // Check if all participants have voted
+      const participants = await storage.getSessionParticipants(client.sessionId);
+      const activeParticipants = participants.filter(p => p.connected);
+      const votes = await storage.getSessionVotes(client.sessionId);
+      
+      if (votes.length === activeParticipants.length) {
+        // Notify all clients that all votes are in
+        broadcastToSession(client.sessionId, {
+          type: MessageType.SESSION_UPDATE,
+          payload: {
+            allVotesIn: true
+          }
+        });
+      }
+    } catch (error) {
+      sendError(socket, "Failed to cast vote");
+    }
+  }
+
+  // REVEAL VOTES HANDLER
+  async function handleRevealVotes(socket: WebSocket, client: ClientConnection) {
+    if (!client.participant || !client.sessionId) {
+      return sendError(socket, "Not in a session");
+    }
+    
+    try {
+      // Update session as revealed
+      const session = await storage.updateSession(client.sessionId, { revealed: true });
+      
+      if (!session) {
+        return sendError(socket, "Session not found");
+      }
+      
+      // Get all votes
+      const votes = await storage.getSessionVotes(client.sessionId);
+      
+      // Notify all clients
+      broadcastToSession(client.sessionId, {
+        type: MessageType.VOTES_REVEALED,
+        payload: {
+          votes,
+          session
+        }
+      });
+    } catch (error) {
+      sendError(socket, "Failed to reveal votes");
+    }
+  }
+
+  // RESET VOTING HANDLER
+  async function handleResetVoting(socket: WebSocket, client: ClientConnection) {
+    if (!client.participant || !client.sessionId) {
+      return sendError(socket, "Not in a session");
+    }
+    
+    try {
+      // Reset all votes for session
+      await storage.resetVotes(client.sessionId);
+      
+      // Update session as not revealed
+      const session = await storage.updateSession(client.sessionId, { revealed: false });
+      
+      if (!session) {
+        return sendError(socket, "Session not found");
+      }
+      
+      // Notify all clients
+      broadcastToSession(client.sessionId, {
+        type: MessageType.VOTING_RESET,
+        payload: {
+          session
+        }
+      });
+    } catch (error) {
+      sendError(socket, "Failed to reset voting");
+    }
+  }
+
+  // SET STORY HANDLER
+  async function handleSetStory(socket: WebSocket, client: ClientConnection, message: WebSocketMessage) {
+    if (!client.participant || !client.sessionId) {
+      return sendError(socket, "Not in a session");
+    }
+    
+    try {
+      const { story } = message.payload;
+      
+      if (!client.participant.isAdmin) {
+        return sendError(socket, "Only administrators can change the story");
+      }
+      
+      // Update session with new story
+      const session = await storage.updateSession(client.sessionId, { 
+        currentStory: story,
+        revealed: false 
+      });
+      
+      if (!session) {
+        return sendError(socket, "Session not found");
+      }
+      
+      // Reset all votes for session
+      await storage.resetVotes(client.sessionId);
+      
+      // Notify all clients
+      broadcastToSession(client.sessionId, {
+        type: MessageType.STORY_UPDATED,
+        payload: {
+          session
+        }
+      });
+    } catch (error) {
+      sendError(socket, "Failed to set story");
+    }
+  }
+
+  // HELPER FUNCTIONS
+  function sendMessage(socket: WebSocket, message: WebSocketMessage) {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(message));
+    }
+  }
+
+  function sendError(socket: WebSocket, errorMessage: string) {
+    sendMessage(socket, {
+      type: MessageType.ERROR,
+      payload: { message: errorMessage }
+    });
+  }
+
+  function broadcastToSession(sessionId: string, message: WebSocketMessage, exclude?: WebSocket) {
+    clients.forEach((client, socket) => {
+      if (client.sessionId === sessionId && socket !== exclude && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(message));
+      }
+    });
+  }
+
+  return httpServer;
+}
