@@ -118,12 +118,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     clients.set(socket, { socket });
     
     // Send a welcome message to confirm connection
-    socket.send(JSON.stringify({
-      type: MessageType.SESSION_UPDATE,
-      payload: {
-        message: "Connection established successfully"
+    // Small delay to ensure socket is fully ready
+    setTimeout(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        try {
+          const welcomeMessage = {
+            type: MessageType.SESSION_UPDATE,
+            payload: {
+              message: "Connection established successfully"
+            }
+          };
+          
+          socket.send(JSON.stringify(welcomeMessage));
+          console.log("Welcome message sent successfully");
+        } catch (err) {
+          console.error("Error sending welcome message:", err);
+        }
+      } else {
+        console.warn("Socket not open when trying to send welcome message, state:", socket.readyState);
       }
-    }));
+    }, 100);
     
     // Handle messages
     socket.on("message", async (data) => {
@@ -222,119 +236,133 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // JOIN SESSION HANDLER
   async function handleJoinSession(socket: WebSocket, client: ClientConnection, message: WebSocketMessage) {
-    const { sessionId, name, isAdmin, votingSystem, sessionName } = message.payload;
+    console.log("Processing join session request:", JSON.stringify(message.payload));
     
-    // Create new session if needed (admin & no existing session)
-    if (isAdmin && sessionName && votingSystem) {
+    try {
+      const { sessionId, name, isAdmin, votingSystem, sessionName } = message.payload;
+      
+      // Validate required fields
+      if (!name) {
+        return sendError(socket, "Participant name is required");
+      }
+      
+      // Create new session if needed (admin & no existing session)
+      if (isAdmin && sessionName && votingSystem) {
+        console.log("Creating new session:", sessionName, "with voting system:", votingSystem);
+        
+        try {
+          // Validate voting system
+          votingSystemSchema.parse(votingSystem);
+          
+          const newSessionId = sessionId || nanoid(6).toUpperCase();
+          console.log("Generated session ID:", newSessionId);
+          
+          // Check if session exists
+          const existingSession = await storage.getSession(newSessionId);
+          if (existingSession) {
+            return sendError(socket, "Session already exists");
+          }
+          
+          // Create new session
+          await storage.createSession({
+            id: newSessionId,
+            name: sessionName,
+            createdBy: name,
+            votingSystem,
+            currentStory: ""
+          });
+          
+          // Create admin participant
+          const participant = await storage.addParticipant({
+            sessionId: newSessionId,
+            name,
+            isAdmin: true
+          });
+          
+          // Update client data
+          client.participant = participant;
+          client.sessionId = newSessionId;
+          
+          // Send success response
+          sendMessage(socket, {
+            type: MessageType.SESSION_UPDATE,
+            payload: {
+              sessionId: newSessionId,
+              participant,
+              session: await storage.getSession(newSessionId),
+              participants: await storage.getSessionParticipants(newSessionId),
+              votes: []
+            }
+          });
+        
+          return;
+        } catch (error) {
+          return sendError(socket, "Invalid session data");
+        }
+      }
+      
+      // Join existing session
       try {
-        // Validate voting system
-        votingSystemSchema.parse(votingSystem);
-        
-        const newSessionId = sessionId || nanoid(6).toUpperCase();
-        
-        // Check if session exists
-        const existingSession = await storage.getSession(newSessionId);
-        if (existingSession) {
-          return sendError(socket, "Session already exists");
+        // Validate session ID
+        if (!sessionId) {
+          return sendError(socket, "Session ID is required");
         }
         
-        // Create new session
-        await storage.createSession({
-          id: newSessionId,
-          name: sessionName,
-          createdBy: name,
-          votingSystem,
-          currentStory: ""
-        });
+        // Check if session exists
+        const session = await storage.getSession(sessionId);
+        if (!session) {
+          return sendError(socket, "Session not found");
+        }
         
-        // Create admin participant
-        const participant = await storage.addParticipant({
-          sessionId: newSessionId,
-          name,
-          isAdmin: true
-        });
+        // Check for name conflict
+        const existingParticipant = await storage.getParticipantByName(sessionId, name);
+        if (existingParticipant) {
+          if (existingParticipant.connected) {
+            return sendError(socket, "A participant with this name already exists in the session");
+          } else {
+            // Re-connect existing participant
+            await storage.updateParticipant(existingParticipant.id, { connected: true });
+            client.participant = { ...existingParticipant, connected: true };
+          }
+        } else {
+          // Create new participant
+          const participant = await storage.addParticipant({
+            sessionId,
+            name,
+            isAdmin: false
+          });
+          client.participant = participant;
+        }
         
-        // Update client data
-        client.participant = participant;
-        client.sessionId = newSessionId;
+        client.sessionId = sessionId;
         
-        // Send success response
+        // Get existing votes
+        const votes = session.revealed ? await storage.getSessionVotes(sessionId) : [];
+        
+        // Notify other clients
+        broadcastToSession(sessionId, {
+          type: MessageType.PARTICIPANT_JOINED,
+          payload: {
+            participant: client.participant,
+          }
+        }, socket);
+        
+        // Send session data to client
         sendMessage(socket, {
           type: MessageType.SESSION_UPDATE,
           payload: {
-            sessionId: newSessionId,
-            participant,
-            session: await storage.getSession(newSessionId),
-            participants: await storage.getSessionParticipants(newSessionId),
-            votes: []
+            sessionId,
+            participant: client.participant,
+            session,
+            participants: await storage.getSessionParticipants(sessionId),
+            votes
           }
         });
-        
-        return;
       } catch (error) {
-        return sendError(socket, "Invalid session data");
+        sendError(socket, "Failed to join session");
       }
-    }
-    
-    // Join existing session
-    try {
-      // Validate session ID
-      if (!sessionId) {
-        return sendError(socket, "Session ID is required");
-      }
-      
-      // Check if session exists
-      const session = await storage.getSession(sessionId);
-      if (!session) {
-        return sendError(socket, "Session not found");
-      }
-      
-      // Check for name conflict
-      const existingParticipant = await storage.getParticipantByName(sessionId, name);
-      if (existingParticipant) {
-        if (existingParticipant.connected) {
-          return sendError(socket, "A participant with this name already exists in the session");
-        } else {
-          // Re-connect existing participant
-          await storage.updateParticipant(existingParticipant.id, { connected: true });
-          client.participant = { ...existingParticipant, connected: true };
-        }
-      } else {
-        // Create new participant
-        const participant = await storage.addParticipant({
-          sessionId,
-          name,
-          isAdmin: false
-        });
-        client.participant = participant;
-      }
-      
-      client.sessionId = sessionId;
-      
-      // Get existing votes
-      const votes = session.revealed ? await storage.getSessionVotes(sessionId) : [];
-      
-      // Notify other clients
-      broadcastToSession(sessionId, {
-        type: MessageType.PARTICIPANT_JOINED,
-        payload: {
-          participant: client.participant,
-        }
-      }, socket);
-      
-      // Send session data to client
-      sendMessage(socket, {
-        type: MessageType.SESSION_UPDATE,
-        payload: {
-          sessionId,
-          participant: client.participant,
-          session,
-          participants: await storage.getSessionParticipants(sessionId),
-          votes
-        }
-      });
     } catch (error) {
-      sendError(socket, "Failed to join session");
+      sendError(socket, "Error processing message");
     }
   }
 

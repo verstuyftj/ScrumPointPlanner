@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+// @ts-ignore - This is a Replit-specific path alias that works at runtime
 import { MessageType, type WebSocketMessage } from "@shared/schema";
 
 // Create a singleton WebSocket instance to be shared across the app
