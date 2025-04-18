@@ -128,7 +128,7 @@ const ActiveSession = ({
             </Button>
             
             <Button
-              className="bg-status-success hover:bg-status-success/90 text-white"
+              className="bg-emerald-500 hover:bg-emerald-600 text-white inline-flex"
               onClick={onRevealCards}
               disabled={!allVotesIn || session.revealed}
               style={{ display: (!allVotesIn || session.revealed) ? 'none' : 'flex' }}
