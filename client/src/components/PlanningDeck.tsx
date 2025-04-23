@@ -18,13 +18,15 @@ const PlanningDeck = ({
         {cardValues.map((value) => (
           <div 
             key={value} 
-            className="card cursor-pointer transition-transform hover:-translate-y-2"
+            className="card cursor-pointer"
             onClick={() => onCardSelect(value)}
           >
             <div 
               className={cn(
                 "card-inner h-20 sm:h-24 md:h-28 w-full bg-white rounded-lg shadow-md overflow-hidden border-2",
-                selectedCard === value ? "border-primary" : "border-transparent hover:border-primary"
+                selectedCard === value 
+                  ? "border-blue-500" 
+                  : "border-transparent"
               )}
             >
               <div className="card-front flex items-center justify-center h-full">

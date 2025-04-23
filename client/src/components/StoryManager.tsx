@@ -95,8 +95,8 @@ const StoryManager: React.FC<StoryManagerProps> = ({
               stories.map((story) => (
                 <div 
                   key={story.id}
-                  className="flex items-center justify-between p-3 hover:bg-accent rounded-md cursor-pointer transition-colors"
-                  onClick={() => handleStoryClick(story)}
+                  className={`flex items-center justify-between p-3 ${isAdmin ? 'hover:bg-accent cursor-pointer' : ''} rounded-md transition-colors`}
+                  onClick={isAdmin ? () => handleStoryClick(story) : undefined}
                 >
                   <div className="flex-1 mr-2 font-medium">
                     {story.title}

@@ -53,6 +53,12 @@ interface ActiveSessionProps {
   onLeaveSession: () => void;
 }
 
+const parseStoryString = (storyString: string | null) => {
+  if (!storyString) return { title: null, link: null };
+  const match = storyString.match(/(.*?)\s*\((.*?)\)/);
+  return match ? { title: match[1], link: match[2] } : { title: storyString, link: null };
+};
+
 const ActiveSession = ({ 
   session, 
   currentUser,
@@ -127,22 +133,25 @@ const ActiveSession = ({
               <LogOut className="mr-2 h-4 w-4" /> Leave
             </Button>
             
-            <Button
-              className="bg-emerald-500 hover:bg-emerald-600 text-white inline-flex"
-              onClick={onRevealCards}
-              disabled={!allVotesIn || session.revealed}
-              style={{ display: (!allVotesIn || session.revealed) ? 'none' : 'flex' }}
-            >
-              <Eye className="mr-2 h-4 w-4" /> Reveal Cards
-            </Button>
+            {currentUser?.isAdmin && (
+              <Button
+                className="bg-emerald-500 hover:bg-emerald-600 text-white inline-flex"
+                onClick={onRevealCards}
+                disabled={!allVotesIn || session.revealed}
+              >
+                <Eye className="mr-2 h-4 w-4" /> Reveal Cards
+              </Button>
+            )}
             
-            <Button
-              variant="outline"
-              className="text-neutral-700"
-              onClick={onResetVoting}
-            >
-              <RefreshCw className="mr-2 h-4 w-4" /> Reset
-            </Button>
+            {currentUser?.isAdmin && (
+              <Button
+                variant="outline"
+                className="text-neutral-700"
+                onClick={onResetVoting}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" /> Reset
+              </Button>
+            )}
           </div>
         </div>
       </Card>
@@ -193,7 +202,25 @@ const ActiveSession = ({
         ) : (
           <div className="p-3 bg-neutral-100 rounded-md border border-neutral-200">
             <p className="text-neutral-600">
-              {session.currentStory || "No story set. The session admin can add a story."}
+              {session.currentStory ? (
+                (() => {
+                  const { title, link } = parseStoryString(session.currentStory);
+                  return link ? (
+                    <a 
+                      href={link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      {title}
+                    </a>
+                  ) : (
+                    title
+                  );
+                })()
+              ) : (
+                "No story set. The session admin can add a story."
+              )}
             </p>
           </div>
         )}
@@ -232,6 +259,7 @@ const ActiveSession = ({
           votes={votes} 
           participants={participants}
           votingSystem={session.votingSystem}
+          isAdmin={!!currentUser?.isAdmin}
           onResetVoting={onResetVoting} 
         />
       )}

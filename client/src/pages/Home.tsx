@@ -13,6 +13,7 @@ export type Participant = {
   isAdmin: boolean;
   connected: boolean;
   sessionId: string;
+  hasVoted?: boolean;  // Add this field
 };
 
 export type Session = {
@@ -74,17 +75,33 @@ const Home = () => {
         break;
         
       case MessageType.VOTE_UPDATED:
-        if (message.payload.vote) {
-          setCurrentVote(message.payload.vote.value);
-        }
         if (message.payload.participantId) {
-          setParticipants(prev => 
-            prev.map(p => 
-              p.id === message.payload.participantId 
-                ? { ...p, hasVoted: true } 
-                : p
-            )
-          );
+          // Mark participant as voted regardless of who voted
+          setParticipants(prev => prev.map(p => 
+            p.id === message.payload.participantId
+              ? { ...p, hasVoted: true }
+              : p
+          ));
+        }
+
+        if (message.payload.vote) {
+          // Update votes array
+          setVotes(prev => {
+            const existingVoteIndex = prev.findIndex(v => 
+              v.participantId === message.payload.vote.participantId
+            );
+            if (existingVoteIndex >= 0) {
+              return prev.map((v, i) => 
+                i === existingVoteIndex ? message.payload.vote : v
+              );
+            }
+            return [...prev, message.payload.vote];
+          });
+
+          // Update current user's vote if applicable
+          if (message.payload.vote.participantId === currentUser?.id) {
+            setCurrentVote(message.payload.vote.value);
+          }
         }
         break;
       
@@ -130,6 +147,8 @@ const Home = () => {
         setVotes([]);
         setCurrentVote(null);
         setAllVotesIn(false);
+        // Reset voting status for all participants
+        setParticipants(prev => prev.map(p => ({ ...p, hasVoted: false })));
         if (message.payload.session) {
           setActiveSession(message.payload.session);
         }
@@ -157,6 +176,8 @@ const Home = () => {
           setVotes([]);
           setCurrentVote(null);
           setAllVotesIn(false);
+          // Reset voting status for all participants
+          setParticipants(prev => prev.map(p => ({ ...p, hasVoted: false })));
           
           const storyDetails = message.payload.currentStory 
             ? `"${message.payload.currentStory.title}"`
@@ -215,7 +236,33 @@ const Home = () => {
   };
 
   const handleSelectCard = (value: string) => {
+    // Set local state immediately for better UX
     setCurrentVote(value);
+    
+    // Also update votes array locally
+    if (currentUser) {
+      const newVote = {
+        id: Date.now(), // Temporary ID
+        sessionId: activeSession?.id || '',
+        participantId: currentUser.id,
+        value
+      };
+      
+      setVotes(prev => {
+        const existingVoteIndex = prev.findIndex(v => v.participantId === currentUser.id);
+        if (existingVoteIndex >= 0) {
+          return prev.map((v, i) => i === existingVoteIndex ? newVote : v);
+        }
+        return [...prev, newVote];
+      });
+
+      // Mark participant as voted
+      setParticipants(prev => prev.map(p => 
+        p.id === currentUser.id ? { ...p, hasVoted: true } : p
+      ));
+    }
+
+    // Send to server
     sendMessage({
       type: MessageType.CAST_VOTE,
       payload: {

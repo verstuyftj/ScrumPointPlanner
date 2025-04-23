@@ -430,20 +430,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         storyId: null
       });
       
-      // Notify all clients about the vote update (without revealing the value)
+      // Notify all clients about the vote update with the full vote information
       broadcastToSession(client.sessionId, {
         type: MessageType.VOTE_UPDATED,
         payload: {
+          vote,
           participantId: client.participant.id,
           hasVoted: true
-        }
-      });
-      
-      // Confirm to the voter
-      sendMessage(socket, {
-        type: MessageType.VOTE_UPDATED,
-        payload: {
-          vote
         }
       });
       

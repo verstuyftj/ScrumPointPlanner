@@ -18,6 +18,7 @@ interface VotingResultsProps {
   votes: Vote[];
   participants: Participant[];
   votingSystem: string;
+  isAdmin: boolean;
   onResetVoting: () => void;
 }
 
@@ -25,6 +26,7 @@ const VotingResults = ({
   votes, 
   participants, 
   votingSystem,
+  isAdmin,
   onResetVoting 
 }: VotingResultsProps) => {
   // Get participant name by ID
@@ -131,14 +133,16 @@ const VotingResults = ({
     <Card className="bg-white rounded-lg shadow-md p-6 mb-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4">
         <h2 className="text-2xl font-semibold text-neutral-700">Voting Results</h2>
-        <div className="flex space-x-2 mt-3 md:mt-0">
-          <Button 
-            className="bg-primary hover:bg-primary/90 text-white" 
-            onClick={onResetVoting}
-          >
-            <Play className="mr-2 h-4 w-4" /> Next Story
-          </Button>
-        </div>
+        {isAdmin && (
+          <div className="flex space-x-2 mt-3 md:mt-0">
+            <Button 
+              className="bg-primary hover:bg-primary/90 text-white" 
+              onClick={onResetVoting}
+            >
+              <Play className="mr-2 h-4 w-4" /> Next Story
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Results Chart */}
