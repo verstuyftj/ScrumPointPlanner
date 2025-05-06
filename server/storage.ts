@@ -15,6 +15,8 @@ import {
   type InsertStory,
   users
 } from "@shared/schema";
+import { db } from './db';
+import { eq, and } from 'drizzle-orm';
 
 // Storage interface for CRUD operations
 export interface IStorage {
@@ -51,208 +53,155 @@ export interface IStorage {
 }
 
 export class MemStorage implements IStorage {
-  private users: Map<number, User>;
-  private sessionMap: Map<string, Session>;
-  private participantMap: Map<number, Participant>;
-  private voteMap: Map<number, Vote>;
-  private storyMap: Map<number, Story>;
-  
-  private userIdCounter: number;
-  private participantIdCounter: number;
-  private voteIdCounter: number;
-  private storyIdCounter: number;
-
-  constructor() {
-    this.users = new Map();
-    this.sessionMap = new Map();
-    this.participantMap = new Map();
-    this.voteMap = new Map();
-    this.storyMap = new Map();
-    
-    this.userIdCounter = 1;
-    this.participantIdCounter = 1;
-    this.voteIdCounter = 1;
-    this.storyIdCounter = 1;
-  }
-
   // User operations
   async getUser(id: number): Promise<User | undefined> {
-    return this.users.get(id);
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = this.userIdCounter++;
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
+    const [user] = await db.insert(users).values(insertUser).returning();
     return user;
   }
 
   // Session operations
   async createSession(sessionData: InsertSession): Promise<Session> {
-    const now = new Date();
-    // Ensure all required fields are present
-    const session: Session = { 
-      ...sessionData, 
-      votingSystem: sessionData.votingSystem || 'fibonacci', // Default if not provided
+    const [session] = await db.insert(sessions).values({
+      ...sessionData,
+      votingSystem: sessionData.votingSystem || 'fibonacci',
       currentStory: sessionData.currentStory || null,
-      active: true, 
+      active: true,
       revealed: false,
-      createdAt: now
-    };
-    
-    this.sessionMap.set(session.id, session);
+    }).returning();
     return session;
   }
 
   async getSession(id: string): Promise<Session | undefined> {
-    return this.sessionMap.get(id);
+    const [session] = await db.select().from(sessions).where(eq(sessions.id, id));
+    return session;
   }
 
   async getSessions(): Promise<Session[]> {
-    return Array.from(this.sessionMap.values());
+    return await db.select().from(sessions);
   }
 
   async updateSession(id: string, sessionData: Partial<Session>): Promise<Session | undefined> {
-    const existingSession = this.sessionMap.get(id);
-    if (!existingSession) return undefined;
-
-    const updatedSession = { ...existingSession, ...sessionData };
-    this.sessionMap.set(id, updatedSession);
-    return updatedSession;
+    const [session] = await db.update(sessions)
+      .set(sessionData)
+      .where(eq(sessions.id, id))
+      .returning();
+    return session;
   }
 
   // Participant operations
   async addParticipant(participant: InsertParticipant): Promise<Participant> {
-    const id = this.participantIdCounter++;
-    const now = new Date();
-    
-    const newParticipant: Participant = { 
-      ...participant, 
-      id, 
-      connected: true, 
-      lastActivity: now 
-    };
-    
-    this.participantMap.set(id, newParticipant);
+    const [newParticipant] = await db.insert(participants)
+      .values(participant)
+      .returning();
     return newParticipant;
   }
 
   async getParticipant(id: number): Promise<Participant | undefined> {
-    return this.participantMap.get(id);
+    const [participant] = await db.select()
+      .from(participants)
+      .where(eq(participants.id, id));
+    return participant;
   }
 
   async getParticipantByName(sessionId: string, name: string): Promise<Participant | undefined> {
-    return Array.from(this.participantMap.values()).find(
-      (p) => p.sessionId === sessionId && p.name === name
-    );
+    const [participant] = await db.select()
+      .from(participants)
+      .where(
+        and(
+          eq(participants.sessionId, sessionId),
+          eq(participants.name, name)
+        )
+      );
+    return participant;
   }
 
   async getSessionParticipants(sessionId: string): Promise<Participant[]> {
-    return Array.from(this.participantMap.values()).filter(
-      (p) => p.sessionId === sessionId
-    );
+    return await db.select()
+      .from(participants)
+      .where(eq(participants.sessionId, sessionId));
   }
 
   async updateParticipant(id: number, participantData: Partial<Participant>): Promise<Participant | undefined> {
-    const existingParticipant = this.participantMap.get(id);
-    if (!existingParticipant) return undefined;
-
-    const updatedParticipant = { ...existingParticipant, ...participantData };
-    this.participantMap.set(id, updatedParticipant);
-    return updatedParticipant;
+    const [participant] = await db.update(participants)
+      .set(participantData)
+      .where(eq(participants.id, id))
+      .returning();
+    return participant;
   }
 
   async removeParticipant(id: number): Promise<boolean> {
-    return this.participantMap.delete(id);
+    const [participant] = await db.delete(participants)
+      .where(eq(participants.id, id))
+      .returning();
+    return !!participant;
   }
   
   // Story operations
   async addStory(story: InsertStory): Promise<Story> {
-    const id = this.storyIdCounter++;
-    const now = new Date();
-    
-    const newStory: Story = { 
-      ...story, 
-      id, 
-      createdAt: now
-    };
-    
-    this.storyMap.set(id, newStory);
+    const [newStory] = await db.insert(stories)
+      .values(story)
+      .returning();
     return newStory;
   }
 
   async getStory(id: number): Promise<Story | undefined> {
-    return this.storyMap.get(id);
+    const [story] = await db.select().from(stories).where(eq(stories.id, id));
+    return story;
   }
 
   async getSessionStories(sessionId: string): Promise<Story[]> {
-    return Array.from(this.storyMap.values()).filter(
-      (s) => s.sessionId === sessionId
-    );
+    return await db.select()
+      .from(stories)
+      .where(eq(stories.sessionId, sessionId));
   }
 
   async updateStory(id: number, storyData: Partial<Story>): Promise<Story | undefined> {
-    const existingStory = this.storyMap.get(id);
-    if (!existingStory) return undefined;
-
-    const updatedStory = { ...existingStory, ...storyData };
-    this.storyMap.set(id, updatedStory);
-    return updatedStory;
+    const [story] = await db.update(stories)
+      .set(storyData)
+      .where(eq(stories.id, id))
+      .returning();
+    return story;
   }
 
   // Vote operations
   async castVote(vote: InsertVote): Promise<Vote> {
-    // Check if a vote already exists for this participant/session
-    const existingVote = await this.getVote(vote.participantId, vote.sessionId);
-    
-    if (existingVote) {
-      // Update existing vote
-      const updatedVote = { ...existingVote, value: vote.value };
-      this.voteMap.set(existingVote.id, updatedVote);
-      return updatedVote;
-    } else {
-      // Create new vote
-      const id = this.voteIdCounter++;
-      const now = new Date();
-      
-      const newVote: Vote = { 
-        ...vote, 
-        id, 
-        createdAt: now 
-      };
-      
-      this.voteMap.set(id, newVote);
-      return newVote;
-    }
+    const [newVote] = await db.insert(votes)
+      .values(vote)
+      .returning();
+    return newVote;
   }
 
   async getVote(participantId: number, sessionId: string): Promise<Vote | undefined> {
-    return Array.from(this.voteMap.values()).find(
-      (v) => v.participantId === participantId && v.sessionId === sessionId
-    );
+    const [vote] = await db.select()
+      .from(votes)
+      .where(
+        and(
+          eq(votes.participantId, participantId),
+          eq(votes.sessionId, sessionId)
+        )
+      );
+    return vote;
   }
 
   async getSessionVotes(sessionId: string): Promise<Vote[]> {
-    return Array.from(this.voteMap.values()).filter(
-      (v) => v.sessionId === sessionId
-    );
+    return await db.select()
+      .from(votes)
+      .where(eq(votes.sessionId, sessionId));
   }
 
   async resetVotes(sessionId: string): Promise<boolean> {
-    // Remove all votes for the session
-    const votes = Array.from(this.voteMap.values());
-    votes.forEach(vote => {
-      if (vote.sessionId === sessionId) {
-        this.voteMap.delete(vote.id);
-      }
-    });
-    
+    await db.delete(votes)
+      .where(eq(votes.sessionId, sessionId));
     return true;
   }
 }

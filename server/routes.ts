@@ -496,21 +496,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     
     try {
-      // Reset all votes for session
-      await storage.resetVotes(client.sessionId);
-      
-      // Update session as not revealed
-      const session = await storage.updateSession(client.sessionId, { revealed: false });
-      
+      // Get current session to find current story
+      const session = await storage.getSession(client.sessionId);
       if (!session) {
         return sendError(socket, "Session not found");
       }
+
+      // If there's a current story, mark it as completed
+      if (session.currentStory) {
+        const storyMatch = session.currentStory.match(/(.*?)\s*\((.*?)\)/);
+        if (storyMatch) {
+          const storyTitle = storyMatch[1];
+          const stories = await storage.getSessionStories(client.sessionId);
+          const currentStory = stories.find(s => s.title === storyTitle && !s.isCompleted);
+          
+          if (currentStory) {
+            await storage.updateStory(currentStory.id, { isCompleted: true });
+          }
+        }
+      }
+      
+      // Reset all votes for session
+      await storage.resetVotes(client.sessionId);
+      
+      // Update session as not revealed and clear current story
+      const updatedSession = await storage.updateSession(client.sessionId, { 
+        revealed: false,
+        currentStory: null
+      });
+      
+      if (!updatedSession) {
+        return sendError(socket, "Failed to update session");
+      }
+      
+      // Get updated stories list
+      const updatedStories = await storage.getSessionStories(client.sessionId);
       
       // Notify all clients
       broadcastToSession(client.sessionId, {
         type: MessageType.VOTING_RESET,
         payload: {
-          session
+          session: updatedSession,
+          stories: updatedStories
         }
       });
     } catch (error) {

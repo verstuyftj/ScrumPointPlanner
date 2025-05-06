@@ -152,6 +152,9 @@ const Home = () => {
         if (message.payload.session) {
           setActiveSession(message.payload.session);
         }
+        if (message.payload.stories) {
+          setStories(message.payload.stories);
+        }
         break;
         
       case MessageType.STORIES_UPDATED:
