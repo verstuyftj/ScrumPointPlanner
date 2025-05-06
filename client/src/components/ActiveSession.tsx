@@ -50,6 +50,7 @@ interface ActiveSessionProps {
   onSetStory: (story: string) => void;
   onAddStory: (title: string, link: string) => void;
   onSelectStory: (storyId: number) => void;
+  onUpdateStory: (storyId: number, title: string, link: string) => void;
   onLeaveSession: () => void;
 }
 
@@ -73,6 +74,7 @@ const ActiveSession = ({
   onSetStory,
   onAddStory,
   onSelectStory,
+  onUpdateStory,
   onLeaveSession
 }: ActiveSessionProps) => {
   const { toast } = useToast();
@@ -250,6 +252,7 @@ const ActiveSession = ({
           stories={stories}
           onAddStory={onAddStory}
           onSelectStory={onSelectStory}
+          onUpdateStory={onUpdateStory}
         />
       </div>
 

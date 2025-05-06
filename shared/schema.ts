@@ -118,6 +118,7 @@ export enum MessageType {
   GET_STORIES = "get_stories",
   STORIES_UPDATED = "stories_updated",
   SET_CURRENT_STORY = "set_current_story",
+  UPDATE_STORY = "update_story",
   SESSION_UPDATE = "session_update",
   ERROR = "error"
 }

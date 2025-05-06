@@ -13,7 +13,7 @@ export type Participant = {
   isAdmin: boolean;
   connected: boolean;
   sessionId: string;
-  hasVoted?: boolean;  // Add this field
+  hasVoted?: boolean;
 };
 
 export type Session = {
@@ -72,20 +72,20 @@ const Home = () => {
         if (message.payload.hasOwnProperty('allVotesIn')) {
           setAllVotesIn(message.payload.allVotesIn);
         }
+        if (message.payload.stories) {
+          setStories(message.payload.stories);
+        }
         break;
-        
+
       case MessageType.VOTE_UPDATED:
         if (message.payload.participantId) {
-          // Mark participant as voted regardless of who voted
           setParticipants(prev => prev.map(p => 
             p.id === message.payload.participantId
               ? { ...p, hasVoted: true }
               : p
           ));
         }
-
         if (message.payload.vote) {
-          // Update votes array
           setVotes(prev => {
             const existingVoteIndex = prev.findIndex(v => 
               v.participantId === message.payload.vote.participantId
@@ -97,8 +97,6 @@ const Home = () => {
             }
             return [...prev, message.payload.vote];
           });
-
-          // Update current user's vote if applicable
           if (message.payload.vote.participantId === currentUser?.id) {
             setCurrentVote(message.payload.vote.value);
           }
@@ -147,7 +145,6 @@ const Home = () => {
         setVotes([]);
         setCurrentVote(null);
         setAllVotesIn(false);
-        // Reset voting status for all participants
         setParticipants(prev => prev.map(p => ({ ...p, hasVoted: false })));
         if (message.payload.session) {
           setActiveSession(message.payload.session);
@@ -159,7 +156,14 @@ const Home = () => {
         
       case MessageType.STORIES_UPDATED:
         if (message.payload.stories) {
+          // Completely replace the stories array to ensure we have the latest data
           setStories(message.payload.stories);
+          if (message.payload.message) {
+            toast({
+              title: "Success",
+              description: message.payload.message,
+            });
+          }
         }
         break;
         
@@ -176,19 +180,11 @@ const Home = () => {
       case MessageType.STORY_UPDATED:
         if (message.payload.session) {
           setActiveSession(message.payload.session);
-          setVotes([]);
-          setCurrentVote(null);
-          setAllVotesIn(false);
-          // Reset voting status for all participants
-          setParticipants(prev => prev.map(p => ({ ...p, hasVoted: false })));
-          
-          const storyDetails = message.payload.currentStory 
-            ? `"${message.payload.currentStory.title}"`
-            : "New story";
-            
+        }
+        if (message.payload.message) {
           toast({
-            title: "Story selected",
-            description: `${storyDetails} is now being estimated`,
+            title: "Success",
+            description: message.payload.message,
           });
         }
         break;
@@ -208,7 +204,6 @@ const Home = () => {
   const handleCreateSession = (sessionName: string, userName: string, votingSystem: string) => {
     console.log('Creating session with:', { sessionName, userName, votingSystem });
     
-    // Display a toast to indicate we're trying to create a session
     toast({
       title: "Creating session...",
       description: `Attempting to create session "${sessionName}" as ${userName}`,
@@ -223,12 +218,11 @@ const Home = () => {
         votingSystem,
       },
     };
-    
     console.log('Sending message:', message);
     sendMessage(message);
   };
 
-  const handleJoinSession = (sessionId: string, userName: string) => {
+  const handleJoinSession = (sessionId: string, userName: string) => {    
     sendMessage({
       type: MessageType.JOIN_SESSION,
       payload: {
@@ -239,18 +233,15 @@ const Home = () => {
   };
 
   const handleSelectCard = (value: string) => {
-    // Set local state immediately for better UX
     setCurrentVote(value);
     
-    // Also update votes array locally
     if (currentUser) {
       const newVote = {
-        id: Date.now(), // Temporary ID
+        id: Date.now(),
         sessionId: activeSession?.id || '',
         participantId: currentUser.id,
         value
       };
-      
       setVotes(prev => {
         const existingVoteIndex = prev.findIndex(v => v.participantId === currentUser.id);
         if (existingVoteIndex >= 0) {
@@ -259,13 +250,10 @@ const Home = () => {
         return [...prev, newVote];
       });
 
-      // Mark participant as voted
       setParticipants(prev => prev.map(p => 
         p.id === currentUser.id ? { ...p, hasVoted: true } : p
       ));
     }
-
-    // Send to server
     sendMessage({
       type: MessageType.CAST_VOTE,
       payload: {
@@ -315,8 +303,19 @@ const Home = () => {
       },
     });
   };
+
+  const handleUpdateStory = (storyId: number, title: string, link: string) => {
+    console.log('Sending update story message:', { storyId, title, link });
+    sendMessage({
+      type: MessageType.UPDATE_STORY,
+      payload: {
+        storyId,
+        title,
+        link
+      },
+    });
+  };
   
-  // Load stories when session is joined
   useEffect(() => {
     if (activeSession) {
       sendMessage({
@@ -365,6 +364,7 @@ const Home = () => {
             onSetStory={handleSetStory}
             onAddStory={handleAddStory}
             onSelectStory={handleSelectStory}
+            onUpdateStory={handleUpdateStory}
             onLeaveSession={handleLeaveSession}
           />
         )}

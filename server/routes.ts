@@ -205,6 +205,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             await handleSetCurrentStory(socket, client, message);
             break;
             
+          case MessageType.UPDATE_STORY:
+            await handleUpdateStory(socket, client, message);
+            break;
+            
           default:
             sendError(socket, "Unsupported message type");
         }
@@ -659,13 +663,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     
     try {
-      const { story } = message.payload;
+      const { story, storyId, update } = message.payload;
       
       if (!client.participant.isAdmin) {
         return sendError(socket, "Only administrators can change the story");
       }
+
+      if (update && storyId) {
+        console.log("Updating story:", { storyId, story });
+        // This is a story update operation
+        const existingStory = await storage.getStory(storyId);
+        if (!existingStory || existingStory.sessionId !== client.sessionId) {
+          return sendError(socket, "Story not found");
+        }
+
+        // Parse title and link from story string
+        const match = story.match(/(.*?)\s*\((.*?)\)/);
+        if (!match) {
+          return sendError(socket, "Invalid story format");
+        }
+
+        const [_, title, link] = match;
+        console.log("Parsed story data:", { title, link });
+
+        // Update the story in the database
+        const updatedStory = await storage.updateStory(storyId, {
+          title: title.trim(),
+          link: link.trim()
+        });
+
+        if (!updatedStory) {
+          return sendError(socket, "Failed to update story");
+        }
+
+        console.log("Story updated successfully:", updatedStory);
+
+        // Get all stories to broadcast the update
+        const stories = await storage.getSessionStories(client.sessionId);
+
+        // If this was the current story in the session, update that too
+        const session = await storage.getSession(client.sessionId);
+        if (session && session.currentStory) {
+          const currentStoryMatch = session.currentStory.match(/(.*?)\s*\((.*?)\)/);
+          if (currentStoryMatch) {
+            const [_, currentTitle] = currentStoryMatch;
+            if (currentTitle === existingStory.title) {
+              // This is the current story, update it
+              await storage.updateSession(client.sessionId, {
+                currentStory: `${updatedStory.title} (${updatedStory.link})`
+              });
+            }
+          }
+        }
+
+        // Notify all clients about the story update
+        broadcastToSession(client.sessionId, {
+          type: MessageType.STORIES_UPDATED,
+          payload: {
+            stories,
+            message: `Story "${updatedStory.title}" has been updated`
+          }
+        });
+
+        return;
+      }
       
-      // Update session with new story
+      // Regular set story operation
       const session = await storage.updateSession(client.sessionId, { 
         currentStory: story,
         revealed: false 
@@ -686,7 +749,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
     } catch (error) {
+      console.error("Error in handleSetStory:", error);
       sendError(socket, "Failed to set story");
+    }
+  }
+
+  // UPDATE STORY HANDLER
+  async function handleUpdateStory(socket: WebSocket, client: ClientConnection, message: WebSocketMessage) {
+    if (!client.participant || !client.sessionId) {
+      return sendError(socket, "Not in a session");
+    }
+    
+    try {
+      const { storyId, title, link } = message.payload;
+      console.log("Updating story:", { storyId, title, link });
+      
+      if (!client.participant.isAdmin) {
+        return sendError(socket, "Only administrators can update stories");
+      }
+      
+      if (!title || !link) {
+        return sendError(socket, "Title and link are required");
+      }
+      
+      // Get the story first
+      const existingStory = await storage.getStory(storyId);
+      if (!existingStory || existingStory.sessionId !== client.sessionId) {
+        return sendError(socket, "Story not found");
+      }
+      
+      // Update the story
+      const updatedStory = await storage.updateStory(storyId, {
+        title: title.trim(),
+        link: link.trim()
+      });
+      
+      if (!updatedStory) {
+        return sendError(socket, "Failed to update story");
+      }
+
+      console.log("Story updated successfully:", updatedStory);
+      
+      // Get all stories to broadcast the update
+      const stories = await storage.getSessionStories(client.sessionId);
+      
+      // If this was the current story in the session, update that too
+      const session = await storage.getSession(client.sessionId);
+      if (session && session.currentStory) {
+        const currentStoryMatch = session.currentStory.match(/(.*?)\s*\((.*?)\)/);
+        if (currentStoryMatch) {
+          const [_, currentTitle] = currentStoryMatch;
+          if (currentTitle === existingStory.title) {
+            // This is the current story, update it
+            const updatedSession = await storage.updateSession(client.sessionId, {
+              currentStory: `${updatedStory.title} (${updatedStory.link})`
+            });
+            
+            if (updatedSession) {
+              // Notify about session update
+              broadcastToSession(client.sessionId, {
+                type: MessageType.SESSION_UPDATE,
+                payload: {
+                  session: updatedSession
+                }
+              });
+            }
+          }
+        }
+      }
+
+      // Notify all clients about story update
+      broadcastToSession(client.sessionId, {
+        type: MessageType.STORIES_UPDATED,
+        payload: {
+          stories,
+          message: `Story "${updatedStory.title}" has been updated`
+        }
+      });
+      
+    } catch (error) {
+      console.error("Error updating story:", error);
+      sendError(socket, "Failed to update story");
     }
   }
 

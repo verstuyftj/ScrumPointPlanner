@@ -166,11 +166,20 @@ export class MemStorage implements IStorage {
   }
 
   async updateStory(id: number, storyData: Partial<Story>): Promise<Story | undefined> {
-    const [story] = await db.update(stories)
-      .set(storyData)
-      .where(eq(stories.id, id))
-      .returning();
-    return story;
+    console.log("Updating story in database:", { id, storyData });
+    try {
+      // Use the stories table and eq for the update
+      const [story] = await db.update(stories)
+        .set(storyData)
+        .where(eq(stories.id, id))
+        .returning();
+      
+      console.log("Story update result:", story);
+      return story;
+    } catch (error) {
+      console.error("Error updating story:", error);
+      return undefined;
+    }
   }
 
   // Vote operations

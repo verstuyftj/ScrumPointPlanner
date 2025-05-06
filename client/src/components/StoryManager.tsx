@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { type Story } from "@shared/schema";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { ExternalLink, CheckCircle } from "lucide-react";
+import { ExternalLink, CheckCircle, Edit } from "lucide-react";
 
 interface StoryManagerProps {
   isAdmin: boolean;
@@ -14,16 +14,19 @@ interface StoryManagerProps {
   stories: Story[];
   onAddStory: (title: string, link: string) => void;
   onSelectStory: (storyId: number) => void;
+  onUpdateStory: (storyId: number, title: string, link: string) => void;
 }
 
 const StoryManager: React.FC<StoryManagerProps> = ({
   isAdmin,
   stories,
   onAddStory,
-  onSelectStory
+  onSelectStory,
+  onUpdateStory
 }) => {
   const [title, setTitle] = useState("");
   const [link, setLink] = useState("");
+  const [editingStory, setEditingStory] = useState<Story | null>(null);
 
   const { votedStories, unvotedStories } = useMemo(() => {
     const voted = stories.filter(story => story.isCompleted);
@@ -34,7 +37,12 @@ const StoryManager: React.FC<StoryManagerProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (title.trim() && link.trim()) {
-      onAddStory(title.trim(), link.trim());
+      if (editingStory) {
+        onUpdateStory(editingStory.id, title.trim(), link.trim());
+        setEditingStory(null);
+      } else {
+        onAddStory(title.trim(), link.trim());
+      }
       setTitle("");
       setLink("");
     }
@@ -42,6 +50,19 @@ const StoryManager: React.FC<StoryManagerProps> = ({
 
   const handleStoryClick = (story: Story) => {
     onSelectStory(story.id);
+  };
+
+  const handleEditClick = (e: React.MouseEvent, story: Story) => {
+    e.stopPropagation();
+    setEditingStory(story);
+    setTitle(story.title);
+    setLink(story.link);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingStory(null);
+    setTitle("");
+    setLink("");
   };
 
   const openStoryLink = (e: React.MouseEvent, link: string) => {
@@ -69,13 +90,24 @@ const StoryManager: React.FC<StoryManagerProps> = ({
               )}
               {story.title}
             </div>
-            <Button 
-              variant="ghost" 
-              size="sm"
-              onClick={(e) => openStoryLink(e, story.link)}
-            >
-              <ExternalLink className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-2">
+              {isAdmin && (
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={(e) => handleEditClick(e, story)}
+                >
+                  <Edit className="h-4 w-4" />
+                </Button>
+              )}
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={(e) => openStoryLink(e, story.link)}
+              >
+                <ExternalLink className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         ))
       )}
@@ -118,9 +150,16 @@ const StoryManager: React.FC<StoryManagerProps> = ({
               />
             </div>
             
-            <Button type="submit" className="w-full">
-              Add Story
-            </Button>
+            <div className="flex gap-2">
+              <Button type="submit" className="flex-1">
+                {editingStory ? 'Update Story' : 'Add Story'}
+              </Button>
+              {editingStory && (
+                <Button type="button" variant="outline" onClick={handleCancelEdit}>
+                  Cancel
+                </Button>
+              )}
+            </div>
           </form>
         )}
         
